@@ -1,0 +1,78 @@
+import os
+from dotenv import load_dotenv
+
+import openai
+import azure.functions as func
+import logging
+import requests
+
+load_dotenv('.env')  # take environment variables from .env.
+
+openai.api_type = "azure"
+openai.api_base = os.getenv('OPENAI_API_BASE')
+openai.api_version = os.getenv('OPENAI_API_VERSION')
+openai.api_key = os.getenv("OPENAI_API_KEY")
+openai_deployment_name = os.getenv("OPENAI_ADA_EMBEDDING_MODEL_NAME")
+
+azcs_index_name = os.getenv("AZURE_COGNITIVE_SEARCH_INDEX_NAME") #"devindex"
+azcs_endpoint = os.getenv("AZURE_COGNITIVE_SEARCH_ENDPOINT")
+azcs_key = os.getenv("AZURE_COGNITIVE_SEARCH_API_KEY")
+
+
+app = func.FunctionApp()
+
+@app.route(route="HttpTrigger", auth_level=func.AuthLevel.FUNCTION)
+def HttpTrigger(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Python HTTP trigger function processed a request.')
+
+    #text_to_search = "Hotels In Mumbai"
+    search_results = __openai_gpt_search(text_to_search)
+    get_results = search_results["gpt_response"]
+    print(get_results)
+
+
+def __openai_gpt_search(input_data):
+    search_url = f"{os.getenv('OPENAI_API_BASE')}/openai/deployments/{openai_deployment_name}/extensions/chat/completions?api-version={os.getenv('OPENAI_API_VERSION')}"
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": os.getenv("OPENAI_API_KEY")
+    }
+
+    conversation = [{"role": "user", "content": input_data}]
+
+    payload = {
+        "messages": conversation,
+        "temperature": 0,
+        "max_tokens": 1000,
+        "top_p": 1,
+        "stop": None,
+        "stream": False,
+        "dataSources": [
+            {
+                "type": "AzureCognitiveSearch",
+                "parameters": {
+                    "endpoint": azcs_endpoint,
+                    "key": azcs_key,
+                    "indexName": azcs_index_name,
+                },
+                "inScope": True,
+                "topNDocuments": 5,
+                "queryType": True,
+                "semanticConfiguration": "default",
+                "roleInformation": "You are an AI assistant that helps people find information."
+            }
+        ]
+    }
+
+    #You are a helpful assistant
+    respData = requests.post(search_url, headers=headers, json=payload)
+    status_code = respData.status_code
+    respData = respData.json()
+    actualResponse = respData["choices"][0]["message"]["content"]
+
+    gpt_response = {
+        "gpt_response": actualResponse,
+        "status_code": status_code
+    }
+
+    return gpt_response
